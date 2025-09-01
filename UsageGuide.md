@@ -885,632 +885,548 @@ print(f"📁 Generated {len(benchmarks) * 3} dataset files")
 
 ---
 
-## Troubleshooting
+## Batch Network Generation with Parameter Loops
 
-### Common Issues & Solutions
-
-#### 1. Installation Issues
-
-```bash
-# Issue: Permission denied during installation
-# Solution: Use user installation
-pip install --user bayesian-network-generator
-
-# Issue: Conflicting dependencies
-# Solution: Create clean environment
-python -m venv fresh_env
-source fresh_env/bin/activate
-pip install bayesian-network-generator
-
-# Issue: Missing C++ compiler for pgmpy
-# Solution: Install build tools
-# On macOS:
-xcode-select --install
-# On Ubuntu/Debian:
-sudo apt-get install build-essential
-# On Windows:
-# Install Visual Studio Build Tools
-```
-
-#### 2. Import Errors
+### Loop Setup 1: Basic Parameter Sweeps
 
 ```python
-# Issue: Cannot import modules
-try:
-    from bayesian_network_generator import create_pgm
-    print("✅ Import successful")
-except ImportError as e:
-    print(f"❌ Import error: {e}")
-    print("Solutions:")
-    print("1. Reinstall: pip uninstall bayesian-network-generator && pip install bayesian-network-generator")
-    print("2. Check Python path: python -c 'import sys; print(sys.path)'")
-    print("3. Verify installation: pip list | grep bayesian")
-
-# Issue: Partial imports work
-try:
-    from bayesian_network_generator import create_pgm
-    from bayesian_network_generator import NetworkGenerator  # Might fail
-except ImportError as e:
-    print(f"Partial import issue: {e}")
-    # Fallback approach
-    import bayesian_network_generator as bng
-    create_pgm = bng.create_pgm
-    NetworkGenerator = bng.NetworkGenerator
-```
-
-#### 3. Memory Issues with Large Networks
-
-```python
-# Issue: Out of memory with large networks
-def create_large_network_safely(nodes, edges, samples):
-    """Create large networks with memory management."""
-    
-    # Check available memory
-    import psutil
-    available_memory = psutil.virtual_memory().available / (1024**3)  # GB
-    
-    # Estimate memory requirements
-    estimated_memory = (nodes * edges * samples) / 1e6  # Rough estimate in GB
-    
-    if estimated_memory > available_memory * 0.8:
-        print(f"⚠️  Warning: Estimated memory ({estimated_memory:.2f}GB) exceeds available ({available_memory:.2f}GB)")
-        
-        # Reduce samples or use chunked processing
-        max_samples = int(samples * 0.5)
-        print(f"🔧 Reducing samples from {samples} to {max_samples}")
-        samples = max_samples
-    
-    # Create network in chunks if still too large
-    if samples > 10000:
-        print("🔄 Using chunked processing...")
-        chunk_size = 5000
-        all_data = []
-        
-        for i in range(0, samples, chunk_size):
-            current_chunk = min(chunk_size, samples - i)
-            network, data = create_pgm(nodes=nodes, edges=edges, samples=current_chunk)
-            all_data.append(data)
-            print(f"  Processed chunk {i//chunk_size + 1}: {current_chunk} samples")
-        
-        # Combine chunks
-        import pandas as pd
-        combined_data = pd.concat(all_data, ignore_index=True)
-        return network, combined_data
-    
-    else:
-        return create_pgm(nodes=nodes, edges=edges, samples=samples)
-
-# Example usage
-network, data = create_large_network_safely(nodes=20, edges=50, samples=50000)
-print(f"✅ Successfully created large network: {data.shape}")
-```
-
-#### 4. Data Quality Issues
-
-```python
-# Issue: Unexpected data quality results
-def debug_data_quality(network, data):
-    """Debug data quality issues step by step."""
-    
-    print("🔍 DEBUGGING DATA QUALITY")
-    print("=" * 30)
-    
-    # Basic data info
-    print(f"Data shape: {data.shape}")
-    print(f"Data types:\n{data.dtypes}")
-    print(f"Memory usage: {data.memory_usage().sum() / 1024**2:.2f} MB")
-    
-    # Check for obvious issues
-    print(f"\n📊 Basic Quality Checks:")
-    print(f"  Null values: {data.isnull().sum().sum()}")
-    print(f"  Duplicate rows: {data.duplicated().sum()}")
-    print(f"  Infinite values: {np.isinf(data.select_dtypes(include=[np.number])).sum().sum()}")
-    
-    # Check data ranges
-    numeric_cols = data.select_dtypes(include=[np.number]).columns
-    if len(numeric_cols) > 0:
-        print(f"\n📈 Numeric Data Ranges:")
-        for col in numeric_cols:
-            print(f"  {col}: [{data[col].min():.3f}, {data[col].max():.3f}]")
-    
-    # Check categorical data
-    categorical_cols = data.select_dtypes(include=['object', 'category']).columns
-    if len(categorical_cols) > 0:
-        print(f"\n📋 Categorical Data:")
-        for col in categorical_cols:
-            unique_vals = data[col].nunique()
-            print(f"  {col}: {unique_vals} unique values")
-            if unique_vals <= 10:
-                print(f"    Values: {list(data[col].unique())}")
-    
-    # Network structure validation
-    print(f"\n🕸️ Network Validation:")
-    print(f"  Nodes in network: {len(network.nodes())}")
-    print(f"  Columns in data: {len(data.columns)}")
-    print(f"  Nodes match columns: {set(network.nodes()) == set(data.columns)}")
-    
-    # Missing node-column mapping
-    network_nodes = set(network.nodes())
-    data_columns = set(data.columns)
-    missing_in_data = network_nodes - data_columns
-    extra_in_data = data_columns - network_nodes
-    
-    if missing_in_data:
-        print(f"  ⚠️  Nodes missing in data: {missing_in_data}")
-    if extra_in_data:
-        print(f"  ⚠️  Extra columns in data: {extra_in_data}")
-
-# Example usage
-network, data = create_pgm(nodes=5, edges=8, samples=1000)
-debug_data_quality(network, data)
-```
-
-#### 5. Performance Optimization
-
-```python
-# Issue: Slow performance with large datasets
+from bayesian_network_generator import create_pgm, create_comprehensive_pgm, NetworkGenerator
+import pandas as pd
+import numpy as np
+import os
+from itertools import product
 import time
-from functools import wraps
 
-def performance_monitor(func):
-    """Decorator to monitor function performance."""
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        start_time = time.time()
-        result = func(*args, **kwargs)
-        end_time = time.time()
-        
-        print(f"⏱️  {func.__name__} took {end_time - start_time:.2f} seconds")
-        return result
-    return wrapper
+# Create output directory
+os.makedirs('batch_networks', exist_ok=True)
 
-# Monitor key operations
-@performance_monitor
-def create_monitored_network(nodes, edges, samples):
-    return create_pgm(nodes=nodes, edges=edges, samples=samples)
+print("🔄 BATCH NETWORK GENERATION")
+print("=" * 35)
 
-@performance_monitor  
-def analyze_monitored_quality(network, data):
-    quality = NetworkQualityMetrics(network, None, data)
-    return quality.generate_comprehensive_report()
-
-# Performance testing
-print("🚀 PERFORMANCE TESTING")
-print("=" * 25)
-
-test_configs = [
-    (5, 8, 1000),
-    (10, 20, 2000), 
-    (15, 30, 5000)
-]
-
-for nodes, edges, samples in test_configs:
-    print(f"\nTesting: {nodes} nodes, {edges} edges, {samples} samples")
-    network, data = create_monitored_network(nodes, edges, samples)
-    report = analyze_monitored_quality(network, data)
-```
-
----
-
-## Best Practices
-
-### 1. Project Organization
-
-```bash
-# Recommended project structure
-my_bn_project/
-├── data/
-│   ├── raw/              # Original/benchmark data
-│   ├── processed/        # Cleaned datasets  
-│   └── synthetic/        # Generated datasets
-├── networks/
-│   ├── structures/       # Network definitions (.json, .bif)
-│   ├── benchmarks/       # Standard benchmarks
-│   └── custom/           # Custom networks
-├── analysis/
-│   ├── quality_reports/  # Quality assessment results
-│   ├── visualizations/   # Plots and charts
-│   └── comparisons/      # Comparative studies
-├── scripts/
-│   ├── generate_data.py  # Data generation scripts
-│   ├── analyze_quality.py # Quality analysis scripts
-│   └── create_networks.py # Network creation scripts
-├── config/
-│   ├── network_configs.json
-│   └── analysis_params.json
-├── requirements.txt
-└── README.md
-```
-
-### 2. Configuration Management
-
-```python
-# config/network_configs.json
-{
-    "small_test": {
-        "nodes": 5,
-        "edges": 8,
-        "samples": 1000,
-        "missing_rate": 0.02,
-        "noise_level": 0.01
-    },
-    "medium_research": {
-        "nodes": 10,
-        "edges": 20,
-        "samples": 5000,
-        "missing_rate": 0.05,
-        "noise_level": 0.02
-    },
-    "large_production": {
-        "nodes": 20,
-        "edges": 50,
-        "samples": 20000,
-        "missing_rate": 0.03,
-        "noise_level": 0.015
-    }
+# Define parameter ranges
+parameter_ranges = {
+    'nodes': [5, 8, 10, 15, 20],
+    'edges': [8, 12, 18, 25, 35],
+    'samples': [1000, 2000, 5000],
+    'missing_rates': [0.0, 0.02, 0.05, 0.10],
+    'noise_levels': [0.0, 0.01, 0.03, 0.05]
 }
 
-# scripts/config_loader.py
-import json
-from bayesian_network_generator import create_comprehensive_pgm
+# Simple parameter sweep
+print("\n🔧 Simple Parameter Sweep:")
+simple_configs = []
 
-def load_config(config_file, config_name):
-    """Load configuration from JSON file."""
-    with open(config_file, 'r') as f:
-        configs = json.load(f)
-    return configs[config_name]
+for nodes in parameter_ranges['nodes'][:3]:  # First 3 node sizes
+    for samples in parameter_ranges['samples'][:2]:  # First 2 sample sizes
+        config = {
+            'nodes': nodes,
+            'edges': int(nodes * 1.5),  # 1.5x edges per node
+            'samples': samples,
+            'seed': 42
+        }
+        simple_configs.append(config)
 
-def create_from_config(config_file, config_name, seed=None):
-    """Create network from configuration."""
-    config = load_config(config_file, config_name)
+print(f"Generated {len(simple_configs)} simple configurations")
+
+# Create networks from simple configs
+simple_results = []
+for i, config in enumerate(simple_configs):
+    print(f"  Creating network {i+1}/{len(simple_configs)}: {config['nodes']} nodes, {config['samples']} samples")
     
-    if seed:
-        config['seed'] = seed
-    
-    return create_comprehensive_pgm(**config)
+    try:
+        network, data = create_pgm(**config)
+        
+        result = {
+            'config_id': i,
+            'nodes': config['nodes'],
+            'edges': len(network.edges()),
+            'samples': config['samples'],
+            'data_shape': data.shape,
+            'success': True,
+            'filename': f"batch_networks/simple_net_{i}.csv"
+        }
+        
+        # Save data
+        data.to_csv(result['filename'], index=False)
+        simple_results.append(result)
+        
+    except Exception as e:
+        print(f"    ❌ Error: {e}")
+        simple_results.append({
+            'config_id': i,
+            'success': False,
+            'error': str(e)
+        })
 
-# Usage
-results = create_from_config('config/network_configs.json', 'medium_research', seed=42)
+print(f"✅ Simple sweep complete: {sum(1 for r in simple_results if r.get('success', False))} successful")
 ```
 
-### 3. Reproducible Research
+### Loop Setup 2: Quality Parameter Grid Search
 
 ```python
-# scripts/reproducible_pipeline.py
-import json
-import pandas as pd
-from datetime import datetime
-from bayesian_network_generator import create_comprehensive_pgm, NetworkQualityMetrics
+print("\n🎯 Quality Parameter Grid Search:")
 
-class ReproduciblePipeline:
-    """Ensure reproducible research with full logging."""
-    
-    def __init__(self, experiment_name, seed=42):
-        self.experiment_name = experiment_name
-        self.seed = seed
-        self.results_log = []
-        self.start_time = datetime.now()
-    
-    def log_step(self, step_name, parameters, results):
-        """Log each step of the pipeline."""
-        log_entry = {
-            'timestamp': datetime.now().isoformat(),
-            'step': step_name,
-            'parameters': parameters,
-            'results': results
-        }
-        self.results_log.append(log_entry)
-    
-    def create_network(self, **kwargs):
-        """Create network with full logging."""
-        kwargs['seed'] = self.seed
-        
-        print(f"🔧 Creating network with parameters: {kwargs}")
-        results = create_comprehensive_pgm(**kwargs)
-        
-        network_info = {
-            'nodes': len(results['network'].nodes()),
-            'edges': len(results['network'].edges()),
-            'data_shape': results['clean_data'].shape,
-            'noisy_data_shape': results['noisy_data'].shape
-        }
-        
-        self.log_step('create_network', kwargs, network_info)
-        return results
-    
-    def analyze_quality(self, network, clean_data, noisy_data):
-        """Analyze quality with logging."""
-        print("🔍 Analyzing data quality...")
-        
-        quality = NetworkQualityMetrics(network, clean_data, noisy_data)
-        report = quality.generate_comprehensive_report()
-        
-        quality_summary = {
-            'overall_quality': report['overall_quality_score'],
-            'completeness': report['completeness_score'],
-            'consistency': report['consistency_score']
-        }
-        
-        self.log_step('analyze_quality', {}, quality_summary)
-        return report
-    
-    def save_results(self, results, output_dir='results'):
-        """Save all results with metadata."""
-        import os
-        os.makedirs(output_dir, exist_ok=True)
-        
-        # Save datasets
-        results['clean_data'].to_csv(f'{output_dir}/{self.experiment_name}_clean.csv', index=False)
-        results['noisy_data'].to_csv(f'{output_dir}/{self.experiment_name}_noisy.csv', index=False)
-        
-        # Save network structure
-        import pickle
-        with open(f'{output_dir}/{self.experiment_name}_network.pkl', 'wb') as f:
-            pickle.dump(results['network'], f)
-        
-        # Save experiment log
-        experiment_metadata = {
-            'experiment_name': self.experiment_name,
-            'seed': self.seed,
-            'start_time': self.start_time.isoformat(),
-            'end_time': datetime.now().isoformat(),
-            'steps': self.results_log
-        }
-        
-        with open(f'{output_dir}/{self.experiment_name}_log.json', 'w') as f:
-            json.dump(experiment_metadata, f, indent=2)
-        
-        print(f"✅ Results saved to {output_dir}/")
-        return output_dir
+# Define quality parameter grid
+quality_grid = {
+    'network_sizes': [(5, 8), (10, 15), (15, 25)],  # (nodes, edges)
+    'sample_sizes': [1000, 3000],
+    'missing_rates': [0.0, 0.03, 0.08],
+    'noise_levels': [0.0, 0.02, 0.05],
+    'outlier_rates': [0.0, 0.01, 0.03]
+}
 
-# Example usage
-pipeline = ReproduciblePipeline('medical_network_study', seed=42)
+# Generate all combinations
+quality_combinations = list(product(
+    quality_grid['network_sizes'],
+    quality_grid['sample_sizes'],
+    quality_grid['missing_rates'],
+    quality_grid['noise_levels'],
+    quality_grid['outlier_rates']
+))
 
-# Create network
-results = pipeline.create_network(
-    nodes=8,
-    edges=15,
-    samples=2000,
-    missing_data_rate=0.05,
-    noise_level=0.02
-)
+print(f"Total quality combinations: {len(quality_combinations)}")
 
-# Analyze quality
-quality_report = pipeline.analyze_quality(
-    results['network'],
-    results['clean_data'], 
-    results['noisy_data']
-)
+# Limit to manageable number
+max_combinations = 20
+selected_combinations = quality_combinations[:max_combinations]
 
-# Save everything
-output_dir = pipeline.save_results(results)
-print(f"📁 Experiment complete: {output_dir}")
-```
-
-### 4. Automated Testing & Validation
-
-```python
-# scripts/validation_suite.py
-import pytest
-from bayesian_network_generator import create_pgm, NetworkGenerator, NetworkQualityMetrics
-
-class NetworkValidationSuite:
-    """Comprehensive validation for generated networks."""
+quality_results = []
+for i, ((nodes, edges), samples, missing_rate, noise_level, outlier_rate) in enumerate(selected_combinations):
+    print(f"  Quality config {i+1}/{len(selected_combinations)}: {nodes}N, {samples}S, {missing_rate:.2f}M, {noise_level:.2f}N")
     
-    @staticmethod
-    def validate_network_structure(network, expected_nodes, expected_edges):
-        """Validate basic network structure."""
-        assert len(network.nodes()) == expected_nodes, f"Expected {expected_nodes} nodes, got {len(network.nodes())}"
-        assert len(network.edges()) <= expected_edges, f"Too many edges: {len(network.edges())} > {expected_edges}"
-        
-        # Check for cycles (DAG requirement)
-        import networkx as nx
-        assert nx.is_directed_acyclic_graph(network), "Network contains cycles"
-        
-        print("✅ Network structure validation passed")
-    
-    @staticmethod
-    def validate_data_quality(data, expected_samples, expected_columns):
-        """Validate generated data quality."""
-        assert data.shape[0] == expected_samples, f"Expected {expected_samples} samples, got {data.shape[0]}"
-        assert data.shape[1] == expected_columns, f"Expected {expected_columns} columns, got {data.shape[1]}"
-        
-        # Check for basic data sanity
-        assert not data.empty, "Data is empty"
-        assert data.isnull().sum().sum() < data.size, "All data is null"
-        
-        print("✅ Data quality validation passed")
-    
-    @staticmethod
-    def validate_reproducibility(seed, runs=3):
-        """Validate reproducibility across multiple runs."""
-        results = []
-        
-        for run in range(runs):
-            network, data = create_pgm(nodes=5, edges=8, samples=100, seed=seed)
-            results.append((network.edges(), data.values.tobytes()))
-        
-        # Check all runs produced identical results
-        for i in range(1, runs):
-            assert results[0][0] == results[i][0], f"Network structures differ between runs 0 and {i}"
-            assert results[0][1] == results[i][1], f"Data differs between runs 0 and {i}"
-        
-        print(f"✅ Reproducibility validation passed ({runs} runs)")
-    
-    def run_full_validation(self):
-        """Run complete validation suite."""
-        print("🧪 RUNNING VALIDATION SUITE")
-        print("=" * 35)
-        
-        # Test 1: Basic functionality
-        print("\n🔬 Test 1: Basic Functionality")
-        network, data = create_pgm(nodes=5, edges=8, samples=1000)
-        self.validate_network_structure(network, 5, 8)
-        self.validate_data_quality(data, 1000, 5)
-        
-        # Test 2: Large networks
-        print("\n🔬 Test 2: Large Networks")
-        network, data = create_pgm(nodes=15, edges=30, samples=2000)
-        self.validate_network_structure(network, 15, 30)
-        self.validate_data_quality(data, 2000, 15)
-        
-        # Test 3: Reproducibility
-        print("\n🔬 Test 3: Reproducibility")
-        self.validate_reproducibility(seed=42, runs=3)
-        
-        # Test 4: Quality metrics
-        print("\n🔬 Test 4: Quality Metrics")
-        generator = NetworkGenerator(seed=42)
-        network = generator.create_random_network(nodes=6, edges=10)
-        clean_data = generator.generate_data(network, samples=1000)
-        noisy_data = generator.generate_data_with_quality_issues(
-            network, samples=1000, missing_rate=0.05, noise_level=0.02
+    try:
+        # Create comprehensive network with quality issues
+        results = create_comprehensive_pgm(
+            nodes=nodes,
+            edges=edges,
+            samples=samples,
+            missing_data_rate=missing_rate,
+            noise_level=noise_level,
+            outlier_rate=outlier_rate,
+            seed=42 + i  # Different seed for each
         )
         
-        quality = NetworkQualityMetrics(network, clean_data, noisy_data)
-        report = quality.generate_comprehensive_report()
+        # Calculate quality metrics
+        from bayesian_network_generator import NetworkQualityMetrics
+        quality = NetworkQualityMetrics(
+            results['network'], 
+            results['clean_data'], 
+            results['noisy_data']
+        )
+        quality_report = quality.generate_comprehensive_report()
         
-        assert 'overall_quality_score' in report, "Missing overall quality score"
-        assert 0 <= report['overall_quality_score'] <= 1, "Quality score out of range"
+        result = {
+            'config_id': i,
+            'nodes': nodes,
+            'edges': edges,
+            'samples': samples,
+            'missing_rate': missing_rate,
+            'noise_level': noise_level,
+            'outlier_rate': outlier_rate,
+            'overall_quality': quality_report.get('overall_quality_score', 0),
+            'completeness': quality_report.get('completeness_score', 0),
+            'consistency': quality_report.get('consistency_score', 0),
+            'clean_filename': f"batch_networks/quality_clean_{i}.csv",
+            'noisy_filename': f"batch_networks/quality_noisy_{i}.csv",
+            'success': True
+        }
         
-        print("✅ Quality metrics validation passed")
+        # Save both datasets
+        results['clean_data'].to_csv(result['clean_filename'], index=False)
+        results['noisy_data'].to_csv(result['noisy_filename'], index=False)
         
-        print("\n🎉 ALL VALIDATIONS PASSED!")
+        quality_results.append(result)
+        
+    except Exception as e:
+        print(f"    ❌ Error: {e}")
+        quality_results.append({
+            'config_id': i,
+            'success': False,
+            'error': str(e)
+        })
 
-# Run validation
-validator = NetworkValidationSuite()
-validator.run_full_validation()
+print(f"✅ Quality grid search complete: {sum(1 for r in quality_results if r.get('success', False))} successful")
 ```
 
-### 5. Performance Benchmarking
+### Loop Setup 3: Topology Variation Loops
 
 ```python
-# scripts/benchmark_suite.py
-import time
-import psutil
-import pandas as pd
-from bayesian_network_generator import create_pgm, create_comprehensive_pgm
+print("\n🕸️ Topology Variation Loops:")
 
-class PerformanceBenchmark:
-    """Benchmark package performance across different configurations."""
+# Different topology types with varying parameters
+topologies = ['random', 'chain', 'star', 'tree']
+generator = NetworkGenerator(seed=42)
+
+topology_results = []
+topology_counter = 0
+
+for topology in topologies:
+    print(f"\n  Processing {topology.upper()} topology:")
     
-    def __init__(self):
-        self.results = []
-    
-    def benchmark_creation(self, configurations):
-        """Benchmark network creation performance."""
-        print("⚡ PERFORMANCE BENCHMARKING")
-        print("=" * 30)
+    # Vary size for each topology
+    for size_multiplier in [1, 2, 3]:
+        base_nodes = 5 * size_multiplier
         
-        for config in configurations:
-            print(f"\n🔧 Config: {config}")
-            
-            # Monitor system resources
-            process = psutil.Process()
-            start_memory = process.memory_info().rss / 1024**2  # MB
-            start_time = time.time()
+        # Vary sample sizes
+        for sample_multiplier in [1, 2]:
+            samples = 1000 * sample_multiplier
             
             try:
-                # Create network
-                if 'missing_data_rate' in config:
-                    results = create_comprehensive_pgm(**config)
-                    network = results['network']
-                    data = results['noisy_data']
-                else:
-                    network, data = create_pgm(**config)
+                # Create network based on topology
+                if topology == 'random':
+                    network = generator.create_random_network(
+                        nodes=base_nodes,
+                        edges=int(base_nodes * 1.5),
+                        node_names=[f"Node_{i}" for i in range(base_nodes)]
+                    )
+                elif topology == 'chain':
+                    node_names = [f"Step_{i}" for i in range(base_nodes)]
+                    network = generator.create_chain_network(node_names)
+                elif topology == 'star':
+                    node_names = ['Center'] + [f"Spoke_{i}" for i in range(base_nodes-1)]
+                    network = generator.create_star_network(node_names)
+                elif topology == 'tree':
+                    # Create tree with approximately base_nodes
+                    levels = int(np.log2(base_nodes)) + 1
+                    node_names = [f"L{level}_N{i}" for level in range(levels) for i in range(2**level)][:base_nodes]
+                    network = generator.create_tree_network(node_names)
                 
-                end_time = time.time()
-                end_memory = process.memory_info().rss / 1024**2  # MB
+                # Generate data
+                data = generator.generate_data(
+                    network=network,
+                    samples=samples,
+                    distribution_type='categorical',
+                    seed=42 + topology_counter
+                )
                 
-                # Calculate metrics
-                execution_time = end_time - start_time
-                memory_used = end_memory - start_memory
-                nodes_per_second = config['nodes'] / execution_time
-                samples_per_second = config['samples'] / execution_time
-                
-                # Store results
-                benchmark_result = {
-                    'nodes': config['nodes'],
-                    'edges': config['edges'],
-                    'samples': config['samples'],
-                    'execution_time': execution_time,
-                    'memory_used_mb': memory_used,
-                    'nodes_per_second': nodes_per_second,
-                    'samples_per_second': samples_per_second,
+                result = {
+                    'config_id': topology_counter,
+                    'topology': topology,
+                    'nodes': len(network.nodes()),
+                    'edges': len(network.edges()),
+                    'samples': samples,
+                    'density': len(network.edges()) / (len(network.nodes()) * (len(network.nodes()) - 1)),
+                    'filename': f"batch_networks/topology_{topology}_{topology_counter}.csv",
                     'success': True
                 }
                 
-                print(f"  ✅ Time: {execution_time:.2f}s, Memory: {memory_used:.1f}MB")
-                print(f"     Rate: {nodes_per_second:.1f} nodes/s, {samples_per_second:.1f} samples/s")
+                # Save data
+                data.to_csv(result['filename'], index=False)
+                topology_results.append(result)
+                
+                print(f"    ✅ {topology} {base_nodes}N {samples}S: {result['filename']}")
+                topology_counter += 1
                 
             except Exception as e:
-                benchmark_result = {
-                    'nodes': config['nodes'],
-                    'edges': config['edges'], 
-                    'samples': config['samples'],
-                    'execution_time': None,
-                    'memory_used_mb': None,
-                    'nodes_per_second': None,
-                    'samples_per_second': None,
+                print(f"    ❌ Error with {topology} {base_nodes}N: {e}")
+                topology_results.append({
+                    'config_id': topology_counter,
+                    'topology': topology,
                     'success': False,
                     'error': str(e)
-                }
-                print(f"  ❌ Failed: {e}")
+                })
+                topology_counter += 1
+
+print(f"✅ Topology variation complete: {sum(1 for r in topology_results if r.get('success', False))} successful")
+```
+
+### Loop Setup 4: Research Scenario Simulations
+
+```python
+print("\n🔬 Research Scenario Simulations:")
+
+# Define research scenarios
+research_scenarios = {
+    'biomedical': {
+        'base_config': {'nodes': 8, 'edges': 12, 'samples': 2000},
+        'quality_variations': [
+            {'missing_data_rate': 0.15, 'noise_level': 0.05, 'description': 'hospital_data'},
+            {'missing_data_rate': 0.08, 'noise_level': 0.02, 'description': 'clinical_trial'},
+            {'missing_data_rate': 0.05, 'noise_level': 0.01, 'description': 'lab_controlled'}
+        ]
+    },
+    'financial': {
+        'base_config': {'nodes': 12, 'edges': 20, 'samples': 5000},
+        'quality_variations': [
+            {'missing_data_rate': 0.03, 'noise_level': 0.01, 'description': 'high_frequency'},
+            {'missing_data_rate': 0.08, 'noise_level': 0.03, 'description': 'emerging_markets'},
+            {'missing_data_rate': 0.12, 'noise_level': 0.04, 'description': 'crisis_period'}
+        ]
+    },
+    'social_network': {
+        'base_config': {'nodes': 15, 'edges': 30, 'samples': 3000},
+        'quality_variations': [
+            {'missing_data_rate': 0.20, 'noise_level': 0.06, 'description': 'survey_data'},
+            {'missing_data_rate': 0.10, 'noise_level': 0.03, 'description': 'platform_data'},
+            {'missing_data_rate': 0.05, 'noise_level': 0.01, 'description': 'controlled_study'}
+        ]
+    }
+}
+
+scenario_results = []
+scenario_counter = 0
+
+for scenario_name, scenario_config in research_scenarios.items():
+    print(f"\n  📊 {scenario_name.upper()} Scenario:")
+    
+    base_config = scenario_config['base_config']
+    
+    for variation in scenario_config['quality_variations']:
+        description = variation['description']
+        print(f"    Processing {description}...")
+        
+        try:
+            # Combine base config with variation
+            full_config = {
+                **base_config,
+                **{k: v for k, v in variation.items() if k != 'description'},
+                'seed': 42 + scenario_counter
+            }
             
-            self.results.append(benchmark_result)
+            # Create comprehensive network
+            results = create_comprehensive_pgm(**full_config)
+            
+            # Quality analysis
+            quality = NetworkQualityMetrics(
+                results['network'], 
+                results['clean_data'], 
+                results['noisy_data']
+            )
+            quality_report = quality.generate_comprehensive_report()
+            
+            result = {
+                'scenario_id': scenario_counter,
+                'scenario': scenario_name,
+                'description': description,
+                'nodes': base_config['nodes'],
+                'edges': base_config['edges'],
+                'samples': base_config['samples'],
+                'missing_rate': variation['missing_data_rate'],
+                'noise_level': variation['noise_level'],
+                'overall_quality': quality_report.get('overall_quality_score', 0),
+                'clean_filename': f"batch_networks/scenario_{scenario_name}_{description}_clean.csv",
+                'noisy_filename': f"batch_networks/scenario_{scenario_name}_{description}_noisy.csv",
+                'quality_report_file': f"batch_networks/scenario_{scenario_name}_{description}_quality.json",
+                'success': True
+            }
+            
+            # Save all data and reports
+            results['clean_data'].to_csv(result['clean_filename'], index=False)
+            results['noisy_data'].to_csv(result['noisy_filename'], index=False)
+            
+            import json
+            with open(result['quality_report_file'], 'w') as f:
+                json.dump(quality_report, f, indent=2)
+            
+            scenario_results.append(result)
+            print(f"      ✅ Saved: {description} (Quality: {result['overall_quality']:.3f})")
+            
+        except Exception as e:
+            print(f"      ❌ Error with {description}: {e}")
+            scenario_results.append({
+                'scenario_id': scenario_counter,
+                'scenario': scenario_name,
+                'description': description,
+                'success': False,
+                'error': str(e)
+            })
+        
+        scenario_counter += 1
+
+print(f"✅ Research scenarios complete: {sum(1 for r in scenario_results if r.get('success', False))} successful")
+```
+
+### Loop Setup 5: Comprehensive Results Summary
+
+```python
+print("\n📊 COMPREHENSIVE BATCH RESULTS SUMMARY")
+print("=" * 45)
+
+# Combine all results
+all_results = {
+    'simple_sweep': simple_results,
+    'quality_grid': quality_results,
+    'topology_variation': topology_results,
+    'research_scenarios': scenario_results
+}
+
+# Create comprehensive summary
+summary_data = []
+
+for batch_type, results in all_results.items():
+    successful = [r for r in results if r.get('success', False)]
+    failed = [r for r in results if not r.get('success', False)]
     
-    def generate_benchmark_report(self):
-        """Generate comprehensive benchmark report."""
-        df = pd.DataFrame(self.results)
-        
-        # Filter successful runs
-        successful = df[df['success'] == True]
-        
-        if len(successful) == 0:
-            print("❌ No successful benchmark runs!")
-            return df
-        
-        print(f"\n📊 BENCHMARK SUMMARY ({len(successful)} successful runs)")
-        print("=" * 50)
-        
-        # Performance statistics
-        print(f"⏱️  Execution Time:")
-        print(f"   Mean: {successful['execution_time'].mean():.2f}s")
-        print(f"   Min:  {successful['execution_time'].min():.2f}s") 
-        print(f"   Max:  {successful['execution_time'].max():.2f}s")
-        
-        print(f"\n💾 Memory Usage:")
-        print(f"   Mean: {successful['memory_used_mb'].mean():.1f}MB")
-        print(f"   Min:  {successful['memory_used_mb'].min():.1f}MB")
-        print(f"   Max:  {successful['memory_used_mb'].max():.1f}MB")
-        
-        print(f"\n🚀 Throughput:")
-        print(f"   Avg nodes/second: {successful['nodes_per_second'].mean():.1f}")
-        print(f"   Avg samples/second: {successful['samples_per_second'].mean():.1f}")
-        
-        # Save detailed results
-        df.to_csv('benchmark_results.csv', index=False)
-        print(f"\n📄 Detailed results saved to: benchmark_results.csv")
-        
-        return df
-
-# Run benchmarks
-benchmark = PerformanceBenchmark()
-
-# Define test configurations
-test_configs = [
-    {'nodes': 5, 'edges': 8, 'samples': 1000},
-    {'nodes': 10, 'edges': 20, 'samples': 2000}, 
-    {'nodes': 15, 'edges': 30, 'samples': 5000},
-    {'nodes': 20, 'edges': 40, 'samples': 10000},
+    print(f"\n🔍 {batch_type.upper().replace('_', ' ')}:")
+    print(f"  Total configurations: {len(results)}")
+    print(f"  Successful: {len(successful)}")
+    print(f"  Failed: {len(failed)}")
     
-    # With quality issues
-    {'nodes': 10, 'edges': 15, 'samples': 2000, 'missing_data_rate': 0.05, 'noise_level': 0.02},
-    {'nodes': 15, 'edges': 25, 'samples': 5000, 'missing_data_rate': 0.05, 'noise_level': 0.02}
-]
+    if successful:
+        # Extract summary statistics
+        if batch_type == 'simple_sweep':
+            nodes_range = [r['nodes'] for r in successful]
+            samples_range = [r['samples'] for r in successful]
+            print(f"  Node range: {min(nodes_range)} - {max(nodes_range)}")
+            print(f"  Sample range: {min(samples_range)} - {max(samples_range)}")
+            
+        elif batch_type == 'quality_grid':
+            quality_scores = [r['overall_quality'] for r in successful]
+            print(f"  Quality score range: {min(quality_scores):.3f} - {max(quality_scores):.3f}")
+            print(f"  Average quality: {np.mean(quality_scores):.3f}")
+            
+        elif batch_type == 'topology_variation':
+            topologies = list(set(r['topology'] for r in successful))
+            print(f"  Topologies: {', '.join(topologies)}")
+            
+        elif batch_type == 'research_scenarios':
+            scenarios = list(set(r['scenario'] for r in successful))
+            print(f"  Scenarios: {', '.join(scenarios)}")
+    
+    # Add to summary data
+    for result in successful:
+        result['batch_type'] = batch_type
+        summary_data.append(result)
 
-benchmark.benchmark_creation(test_configs)
-results_df = benchmark.generate_benchmark_report()
+# Save comprehensive summary
+summary_df = pd.DataFrame(summary_data)
+summary_df.to_csv('batch_networks/comprehensive_summary.csv', index=False)
+
+print(f"\n✅ BATCH GENERATION COMPLETE!")
+print(f"📁 Total successful networks: {len(summary_data)}")
+print(f"📄 Summary saved to: batch_networks/comprehensive_summary.csv")
+print(f"📂 All files saved in: batch_networks/")
+
+# Display file count
+import glob
+csv_files = glob.glob('batch_networks/*.csv')
+json_files = glob.glob('batch_networks/*.json')
+
+print(f"\n📊 Generated Files:")
+print(f"  CSV data files: {len(csv_files)}")
+print(f"  JSON report files: {len(json_files)}")
+print(f"  Total files: {len(csv_files) + len(json_files)}")
+```
+
+### Loop Setup 6: Custom Parameter Loop Function
+
+```python
+def create_parameter_loop(parameter_dict, max_combinations=None, output_dir='custom_networks', seed_base=42):
+    """
+    Generic function to create networks with parameter loops.
+    
+    Args:
+        parameter_dict: Dictionary with parameter names and lists of values
+        max_combinations: Maximum number of combinations to process
+        output_dir: Directory to save results
+        seed_base: Base seed for reproducibility
+    
+    Returns:
+        List of results from network generation
+    """
+    from itertools import product
+    import os
+    
+    # Create output directory
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Generate all parameter combinations
+    param_names = list(parameter_dict.keys())
+    param_values = list(parameter_dict.values())
+    all_combinations = list(product(*param_values))
+    
+    # Limit combinations if specified
+    if max_combinations and len(all_combinations) > max_combinations:
+        all_combinations = all_combinations[:max_combinations]
+        print(f"⚠️  Limited to {max_combinations} combinations (out of {len(list(product(*param_values)))})")
+    
+    print(f"🔄 Processing {len(all_combinations)} parameter combinations...")
+    
+    results = []
+    
+    for i, combination in enumerate(all_combinations):
+        # Create parameter dictionary for this combination
+        params = dict(zip(param_names, combination))
+        params['seed'] = seed_base + i
+        
+        print(f"  Config {i+1}/{len(all_combinations)}: {params}")
+        
+        try:
+            # Determine which function to use based on parameters
+            if any(key in params for key in ['missing_data_rate', 'noise_level', 'outlier_rate']):
+                # Use comprehensive function for quality parameters
+                network_results = create_comprehensive_pgm(**params)
+                network = network_results['network']
+                data = network_results['noisy_data']
+                clean_data = network_results.get('clean_data')
+            else:
+                # Use simple function
+                network, data = create_pgm(**params)
+                clean_data = None
+            
+            # Create result record
+            result = {
+                'config_id': i,
+                **params,
+                'actual_nodes': len(network.nodes()),
+                'actual_edges': len(network.edges()),
+                'data_shape': data.shape,
+                'success': True,
+                'filename': f"{output_dir}/config_{i:03d}.csv"
+            }
+            
+            # Save data
+            data.to_csv(result['filename'], index=False)
+            
+            # Save clean data if available
+            if clean_data is not None:
+                clean_filename = f"{output_dir}/config_{i:03d}_clean.csv"
+                clean_data.to_csv(clean_filename, index=False)
+                result['clean_filename'] = clean_filename
+            
+            results.append(result)
+            print(f"    ✅ Success: {result['filename']}")
+            
+        except Exception as e:
+            error_result = {
+                'config_id': i,
+                **params,
+                'success': False,
+                'error': str(e)
+            }
+            results.append(error_result)
+            print(f"    ❌ Error: {e}")
+    
+    # Save parameter loop summary
+    results_df = pd.DataFrame(results)
+    results_df.to_csv(f"{output_dir}/parameter_loop_summary.csv", index=False)
+    
+    successful = sum(1 for r in results if r.get('success', False))
+    print(f"\n✅ Parameter loop complete: {successful}/{len(results)} successful")
+    
+    return results
+
+# Example usage of the custom parameter loop function
+print("\n🎯 CUSTOM PARAMETER LOOP EXAMPLE:")
+
+# Define custom parameters
+custom_params = {
+    'nodes': [6, 10, 15],
+    'edges': [10, 18, 25], 
+    'samples': [1500, 3000],
+    'missing_data_rate': [0.0, 0.05],
+    'noise_level': [0.0, 0.02]
+}
+
+# Run custom parameter loop
+custom_results = create_parameter_loop(
+    parameter_dict=custom_params,
+    max_combinations=15,
+    output_dir='custom_parameter_networks',
+    seed_base=100
+)
+
+print(f"Custom loop generated {len(custom_results)} configurations")
 ```
 
 ---
