@@ -8,14 +8,12 @@
 5. [CLI Command Reference](#cli-command-reference)
 6. [Function API Reference](#function-api-reference)
 7. [Real-World Examples](#real-world-examples)
-8. [Troubleshooting](#troubleshooting)
-9. [Best Practices](#best-practices)
 
 ---
 
 ## Quick Start Guide
 
-### 5-Minute Setup & First Network
+### Setup & First Network
 
 ```bash
 # 1. Install the package
@@ -82,6 +80,39 @@ print(f"✅ BNG Version: {bng.__version__}")
 network, data = bng.create_pgm(nodes=3, edges=2, samples=100)
 print(f"✅ Created network with {len(network.nodes())} nodes")
 print(f"✅ Generated {len(data)} data samples")
+```
+
+---
+
+## 🎯 Quick Reference Summary
+
+### Essential Commands
+```bash
+# Installation
+pip install bayesian-network-generator
+
+# Quick network creation
+bng-create --nodes 5 --edges 8 --output network.json
+bng-generate --network network.json --samples 1000 --output data.csv
+
+# Quality analysis
+bng-analyze --data data.csv --network network.json --output report.json
+```
+
+### Essential Functions
+```python
+from bayesian_network_generator import create_pgm, create_comprehensive_pgm, NetworkGenerator
+
+# Basic usage
+network, data = create_pgm(nodes=5, edges=8, samples=1000)
+
+# Advanced usage
+results = create_comprehensive_pgm(nodes=6, edges=10, samples=1500, 
+                                 missing_data_rate=0.05, noise_level=0.02)
+
+# Custom networks
+generator = NetworkGenerator(seed=42)
+custom_net = generator.create_chain_network(['A', 'B', 'C', 'D'])
 ```
 
 ---
@@ -887,7 +918,7 @@ print(f"📁 Generated {len(benchmarks) * 3} dataset files")
 
 ## Batch Network Generation with Parameter Loops
 
-### Loop Setup 1: Basic Parameter Sweeps
+### Loop Setup: Basic Parameter Sweeps
 
 ```python
 from bayesian_network_generator import create_pgm, create_comprehensive_pgm, NetworkGenerator
@@ -961,512 +992,11 @@ for i, config in enumerate(simple_configs):
 print(f"✅ Simple sweep complete: {sum(1 for r in simple_results if r.get('success', False))} successful")
 ```
 
-### Loop Setup 2: Quality Parameter Grid Search
-
-```python
-print("\n🎯 Quality Parameter Grid Search:")
-
-# Define quality parameter grid
-quality_grid = {
-    'network_sizes': [(5, 8), (10, 15), (15, 25)],  # (nodes, edges)
-    'sample_sizes': [1000, 3000],
-    'missing_rates': [0.0, 0.03, 0.08],
-    'noise_levels': [0.0, 0.02, 0.05],
-    'outlier_rates': [0.0, 0.01, 0.03]
-}
-
-# Generate all combinations
-quality_combinations = list(product(
-    quality_grid['network_sizes'],
-    quality_grid['sample_sizes'],
-    quality_grid['missing_rates'],
-    quality_grid['noise_levels'],
-    quality_grid['outlier_rates']
-))
-
-print(f"Total quality combinations: {len(quality_combinations)}")
-
-# Limit to manageable number
-max_combinations = 20
-selected_combinations = quality_combinations[:max_combinations]
-
-quality_results = []
-for i, ((nodes, edges), samples, missing_rate, noise_level, outlier_rate) in enumerate(selected_combinations):
-    print(f"  Quality config {i+1}/{len(selected_combinations)}: {nodes}N, {samples}S, {missing_rate:.2f}M, {noise_level:.2f}N")
-    
-    try:
-        # Create comprehensive network with quality issues
-        results = create_comprehensive_pgm(
-            nodes=nodes,
-            edges=edges,
-            samples=samples,
-            missing_data_rate=missing_rate,
-            noise_level=noise_level,
-            outlier_rate=outlier_rate,
-            seed=42 + i  # Different seed for each
-        )
-        
-        # Calculate quality metrics
-        from bayesian_network_generator import NetworkQualityMetrics
-        quality = NetworkQualityMetrics(
-            results['network'], 
-            results['clean_data'], 
-            results['noisy_data']
-        )
-        quality_report = quality.generate_comprehensive_report()
-        
-        result = {
-            'config_id': i,
-            'nodes': nodes,
-            'edges': edges,
-            'samples': samples,
-            'missing_rate': missing_rate,
-            'noise_level': noise_level,
-            'outlier_rate': outlier_rate,
-            'overall_quality': quality_report.get('overall_quality_score', 0),
-            'completeness': quality_report.get('completeness_score', 0),
-            'consistency': quality_report.get('consistency_score', 0),
-            'clean_filename': f"batch_networks/quality_clean_{i}.csv",
-            'noisy_filename': f"batch_networks/quality_noisy_{i}.csv",
-            'success': True
-        }
-        
-        # Save both datasets
-        results['clean_data'].to_csv(result['clean_filename'], index=False)
-        results['noisy_data'].to_csv(result['noisy_filename'], index=False)
-        
-        quality_results.append(result)
-        
-    except Exception as e:
-        print(f"    ❌ Error: {e}")
-        quality_results.append({
-            'config_id': i,
-            'success': False,
-            'error': str(e)
-        })
-
-print(f"✅ Quality grid search complete: {sum(1 for r in quality_results if r.get('success', False))} successful")
-```
-
-### Loop Setup 3: Topology Variation Loops
-
-```python
-print("\n🕸️ Topology Variation Loops:")
-
-# Different topology types with varying parameters
-topologies = ['random', 'chain', 'star', 'tree']
-generator = NetworkGenerator(seed=42)
-
-topology_results = []
-topology_counter = 0
-
-for topology in topologies:
-    print(f"\n  Processing {topology.upper()} topology:")
-    
-    # Vary size for each topology
-    for size_multiplier in [1, 2, 3]:
-        base_nodes = 5 * size_multiplier
-        
-        # Vary sample sizes
-        for sample_multiplier in [1, 2]:
-            samples = 1000 * sample_multiplier
-            
-            try:
-                # Create network based on topology
-                if topology == 'random':
-                    network = generator.create_random_network(
-                        nodes=base_nodes,
-                        edges=int(base_nodes * 1.5),
-                        node_names=[f"Node_{i}" for i in range(base_nodes)]
-                    )
-                elif topology == 'chain':
-                    node_names = [f"Step_{i}" for i in range(base_nodes)]
-                    network = generator.create_chain_network(node_names)
-                elif topology == 'star':
-                    node_names = ['Center'] + [f"Spoke_{i}" for i in range(base_nodes-1)]
-                    network = generator.create_star_network(node_names)
-                elif topology == 'tree':
-                    # Create tree with approximately base_nodes
-                    levels = int(np.log2(base_nodes)) + 1
-                    node_names = [f"L{level}_N{i}" for level in range(levels) for i in range(2**level)][:base_nodes]
-                    network = generator.create_tree_network(node_names)
-                
-                # Generate data
-                data = generator.generate_data(
-                    network=network,
-                    samples=samples,
-                    distribution_type='categorical',
-                    seed=42 + topology_counter
-                )
-                
-                result = {
-                    'config_id': topology_counter,
-                    'topology': topology,
-                    'nodes': len(network.nodes()),
-                    'edges': len(network.edges()),
-                    'samples': samples,
-                    'density': len(network.edges()) / (len(network.nodes()) * (len(network.nodes()) - 1)),
-                    'filename': f"batch_networks/topology_{topology}_{topology_counter}.csv",
-                    'success': True
-                }
-                
-                # Save data
-                data.to_csv(result['filename'], index=False)
-                topology_results.append(result)
-                
-                print(f"    ✅ {topology} {base_nodes}N {samples}S: {result['filename']}")
-                topology_counter += 1
-                
-            except Exception as e:
-                print(f"    ❌ Error with {topology} {base_nodes}N: {e}")
-                topology_results.append({
-                    'config_id': topology_counter,
-                    'topology': topology,
-                    'success': False,
-                    'error': str(e)
-                })
-                topology_counter += 1
-
-print(f"✅ Topology variation complete: {sum(1 for r in topology_results if r.get('success', False))} successful")
-```
-
-### Loop Setup 4: Research Scenario Simulations
-
-```python
-print("\n🔬 Research Scenario Simulations:")
-
-# Define research scenarios
-research_scenarios = {
-    'biomedical': {
-        'base_config': {'nodes': 8, 'edges': 12, 'samples': 2000},
-        'quality_variations': [
-            {'missing_data_rate': 0.15, 'noise_level': 0.05, 'description': 'hospital_data'},
-            {'missing_data_rate': 0.08, 'noise_level': 0.02, 'description': 'clinical_trial'},
-            {'missing_data_rate': 0.05, 'noise_level': 0.01, 'description': 'lab_controlled'}
-        ]
-    },
-    'financial': {
-        'base_config': {'nodes': 12, 'edges': 20, 'samples': 5000},
-        'quality_variations': [
-            {'missing_data_rate': 0.03, 'noise_level': 0.01, 'description': 'high_frequency'},
-            {'missing_data_rate': 0.08, 'noise_level': 0.03, 'description': 'emerging_markets'},
-            {'missing_data_rate': 0.12, 'noise_level': 0.04, 'description': 'crisis_period'}
-        ]
-    },
-    'social_network': {
-        'base_config': {'nodes': 15, 'edges': 30, 'samples': 3000},
-        'quality_variations': [
-            {'missing_data_rate': 0.20, 'noise_level': 0.06, 'description': 'survey_data'},
-            {'missing_data_rate': 0.10, 'noise_level': 0.03, 'description': 'platform_data'},
-            {'missing_data_rate': 0.05, 'noise_level': 0.01, 'description': 'controlled_study'}
-        ]
-    }
-}
-
-scenario_results = []
-scenario_counter = 0
-
-for scenario_name, scenario_config in research_scenarios.items():
-    print(f"\n  📊 {scenario_name.upper()} Scenario:")
-    
-    base_config = scenario_config['base_config']
-    
-    for variation in scenario_config['quality_variations']:
-        description = variation['description']
-        print(f"    Processing {description}...")
-        
-        try:
-            # Combine base config with variation
-            full_config = {
-                **base_config,
-                **{k: v for k, v in variation.items() if k != 'description'},
-                'seed': 42 + scenario_counter
-            }
-            
-            # Create comprehensive network
-            results = create_comprehensive_pgm(**full_config)
-            
-            # Quality analysis
-            quality = NetworkQualityMetrics(
-                results['network'], 
-                results['clean_data'], 
-                results['noisy_data']
-            )
-            quality_report = quality.generate_comprehensive_report()
-            
-            result = {
-                'scenario_id': scenario_counter,
-                'scenario': scenario_name,
-                'description': description,
-                'nodes': base_config['nodes'],
-                'edges': base_config['edges'],
-                'samples': base_config['samples'],
-                'missing_rate': variation['missing_data_rate'],
-                'noise_level': variation['noise_level'],
-                'overall_quality': quality_report.get('overall_quality_score', 0),
-                'clean_filename': f"batch_networks/scenario_{scenario_name}_{description}_clean.csv",
-                'noisy_filename': f"batch_networks/scenario_{scenario_name}_{description}_noisy.csv",
-                'quality_report_file': f"batch_networks/scenario_{scenario_name}_{description}_quality.json",
-                'success': True
-            }
-            
-            # Save all data and reports
-            results['clean_data'].to_csv(result['clean_filename'], index=False)
-            results['noisy_data'].to_csv(result['noisy_filename'], index=False)
-            
-            import json
-            with open(result['quality_report_file'], 'w') as f:
-                json.dump(quality_report, f, indent=2)
-            
-            scenario_results.append(result)
-            print(f"      ✅ Saved: {description} (Quality: {result['overall_quality']:.3f})")
-            
-        except Exception as e:
-            print(f"      ❌ Error with {description}: {e}")
-            scenario_results.append({
-                'scenario_id': scenario_counter,
-                'scenario': scenario_name,
-                'description': description,
-                'success': False,
-                'error': str(e)
-            })
-        
-        scenario_counter += 1
-
-print(f"✅ Research scenarios complete: {sum(1 for r in scenario_results if r.get('success', False))} successful")
-```
-
-### Loop Setup 5: Comprehensive Results Summary
-
-```python
-print("\n📊 COMPREHENSIVE BATCH RESULTS SUMMARY")
-print("=" * 45)
-
-# Combine all results
-all_results = {
-    'simple_sweep': simple_results,
-    'quality_grid': quality_results,
-    'topology_variation': topology_results,
-    'research_scenarios': scenario_results
-}
-
-# Create comprehensive summary
-summary_data = []
-
-for batch_type, results in all_results.items():
-    successful = [r for r in results if r.get('success', False)]
-    failed = [r for r in results if not r.get('success', False)]
-    
-    print(f"\n🔍 {batch_type.upper().replace('_', ' ')}:")
-    print(f"  Total configurations: {len(results)}")
-    print(f"  Successful: {len(successful)}")
-    print(f"  Failed: {len(failed)}")
-    
-    if successful:
-        # Extract summary statistics
-        if batch_type == 'simple_sweep':
-            nodes_range = [r['nodes'] for r in successful]
-            samples_range = [r['samples'] for r in successful]
-            print(f"  Node range: {min(nodes_range)} - {max(nodes_range)}")
-            print(f"  Sample range: {min(samples_range)} - {max(samples_range)}")
-            
-        elif batch_type == 'quality_grid':
-            quality_scores = [r['overall_quality'] for r in successful]
-            print(f"  Quality score range: {min(quality_scores):.3f} - {max(quality_scores):.3f}")
-            print(f"  Average quality: {np.mean(quality_scores):.3f}")
-            
-        elif batch_type == 'topology_variation':
-            topologies = list(set(r['topology'] for r in successful))
-            print(f"  Topologies: {', '.join(topologies)}")
-            
-        elif batch_type == 'research_scenarios':
-            scenarios = list(set(r['scenario'] for r in successful))
-            print(f"  Scenarios: {', '.join(scenarios)}")
-    
-    # Add to summary data
-    for result in successful:
-        result['batch_type'] = batch_type
-        summary_data.append(result)
-
-# Save comprehensive summary
-summary_df = pd.DataFrame(summary_data)
-summary_df.to_csv('batch_networks/comprehensive_summary.csv', index=False)
-
-print(f"\n✅ BATCH GENERATION COMPLETE!")
-print(f"📁 Total successful networks: {len(summary_data)}")
-print(f"📄 Summary saved to: batch_networks/comprehensive_summary.csv")
-print(f"📂 All files saved in: batch_networks/")
-
-# Display file count
-import glob
-csv_files = glob.glob('batch_networks/*.csv')
-json_files = glob.glob('batch_networks/*.json')
-
-print(f"\n📊 Generated Files:")
-print(f"  CSV data files: {len(csv_files)}")
-print(f"  JSON report files: {len(json_files)}")
-print(f"  Total files: {len(csv_files) + len(json_files)}")
-```
-
-### Loop Setup 6: Custom Parameter Loop Function
-
-```python
-def create_parameter_loop(parameter_dict, max_combinations=None, output_dir='custom_networks', seed_base=42):
-    """
-    Generic function to create networks with parameter loops.
-    
-    Args:
-        parameter_dict: Dictionary with parameter names and lists of values
-        max_combinations: Maximum number of combinations to process
-        output_dir: Directory to save results
-        seed_base: Base seed for reproducibility
-    
-    Returns:
-        List of results from network generation
-    """
-    from itertools import product
-    import os
-    
-    # Create output directory
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Generate all parameter combinations
-    param_names = list(parameter_dict.keys())
-    param_values = list(parameter_dict.values())
-    all_combinations = list(product(*param_values))
-    
-    # Limit combinations if specified
-    if max_combinations and len(all_combinations) > max_combinations:
-        all_combinations = all_combinations[:max_combinations]
-        print(f"⚠️  Limited to {max_combinations} combinations (out of {len(list(product(*param_values)))})")
-    
-    print(f"🔄 Processing {len(all_combinations)} parameter combinations...")
-    
-    results = []
-    
-    for i, combination in enumerate(all_combinations):
-        # Create parameter dictionary for this combination
-        params = dict(zip(param_names, combination))
-        params['seed'] = seed_base + i
-        
-        print(f"  Config {i+1}/{len(all_combinations)}: {params}")
-        
-        try:
-            # Determine which function to use based on parameters
-            if any(key in params for key in ['missing_data_rate', 'noise_level', 'outlier_rate']):
-                # Use comprehensive function for quality parameters
-                network_results = create_comprehensive_pgm(**params)
-                network = network_results['network']
-                data = network_results['noisy_data']
-                clean_data = network_results.get('clean_data')
-            else:
-                # Use simple function
-                network, data = create_pgm(**params)
-                clean_data = None
-            
-            # Create result record
-            result = {
-                'config_id': i,
-                **params,
-                'actual_nodes': len(network.nodes()),
-                'actual_edges': len(network.edges()),
-                'data_shape': data.shape,
-                'success': True,
-                'filename': f"{output_dir}/config_{i:03d}.csv"
-            }
-            
-            # Save data
-            data.to_csv(result['filename'], index=False)
-            
-            # Save clean data if available
-            if clean_data is not None:
-                clean_filename = f"{output_dir}/config_{i:03d}_clean.csv"
-                clean_data.to_csv(clean_filename, index=False)
-                result['clean_filename'] = clean_filename
-            
-            results.append(result)
-            print(f"    ✅ Success: {result['filename']}")
-            
-        except Exception as e:
-            error_result = {
-                'config_id': i,
-                **params,
-                'success': False,
-                'error': str(e)
-            }
-            results.append(error_result)
-            print(f"    ❌ Error: {e}")
-    
-    # Save parameter loop summary
-    results_df = pd.DataFrame(results)
-    results_df.to_csv(f"{output_dir}/parameter_loop_summary.csv", index=False)
-    
-    successful = sum(1 for r in results if r.get('success', False))
-    print(f"\n✅ Parameter loop complete: {successful}/{len(results)} successful")
-    
-    return results
-
-# Example usage of the custom parameter loop function
-print("\n🎯 CUSTOM PARAMETER LOOP EXAMPLE:")
-
-# Define custom parameters
-custom_params = {
-    'nodes': [6, 10, 15],
-    'edges': [10, 18, 25], 
-    'samples': [1500, 3000],
-    'missing_data_rate': [0.0, 0.05],
-    'noise_level': [0.0, 0.02]
-}
-
-# Run custom parameter loop
-custom_results = create_parameter_loop(
-    parameter_dict=custom_params,
-    max_combinations=15,
-    output_dir='custom_parameter_networks',
-    seed_base=100
-)
-
-print(f"Custom loop generated {len(custom_results)} configurations")
-```
-
 ---
-
-## 🎯 Quick Reference Summary
-
-### Essential Commands
-```bash
-# Installation
-pip install bayesian-network-generator
-
-# Quick network creation
-bng-create --nodes 5 --edges 8 --output network.json
-bng-generate --network network.json --samples 1000 --output data.csv
-
-# Quality analysis
-bng-analyze --data data.csv --network network.json --output report.json
-```
-
-### Essential Functions
-```python
-from bayesian_network_generator import create_pgm, create_comprehensive_pgm, NetworkGenerator
-
-# Basic usage
-network, data = create_pgm(nodes=5, edges=8, samples=1000)
-
-# Advanced usage
-results = create_comprehensive_pgm(nodes=6, edges=10, samples=1500, 
-                                 missing_data_rate=0.05, noise_level=0.02)
-
-# Custom networks
-generator = NetworkGenerator(seed=42)
-custom_net = generator.create_chain_network(['A', 'B', 'C', 'D'])
-```
 
 ### Common Workflows
 1. **Research**: Create benchmark → Add quality issues → Analyze → Compare
 2. **Testing**: Generate small networks → Validate structure → Test algorithms
 3. **Production**: Load configuration → Create large networks → Quality control → Export
-
----
 
 This comprehensive workflow guide provides everything needed to effectively use the Bayesian Network Generator package, from basic usage to advanced research scenarios. Each section includes practical examples that can be copied and adapted for specific use cases.
